@@ -42,7 +42,7 @@ export async function listKeyword(request: IRequest, env: Env): Promise<Response
   const size = parseInt((request.query.size as string) || '100');
 
   const offset = (page - 1) * size;
-  const keywords = await queryDatabase(env, 'SELECT * FROM home_keywordtable LIMIT ? OFFSET ?', [size, offset]);
+  const keywords = await queryDatabase(env, 'SELECT hk.*, hc.name FROM home_keywordtable hk left join home_categorytable hc on hk.group_id = hc.uuid LIMIT ? OFFSET ?', [size, offset]);
 
   const total = await queryDatabase(env, 'SELECT COUNT(*) as count FROM home_keywordtable');
 
@@ -59,13 +59,13 @@ export async function addKeyword(request: IRequest, env: Env): Promise<Response>
   const existing = await queryDatabase(env, 'SELECT id FROM home_keywordtable WHERE keyword = ?', [data.keyword]);
 
   if (existing.results.length > 0) {
-    return new Response(JSON.stringify({ code: -1, msg: "单词已收藏", id: existing.results[0].id }));
+    return new Response(JSON.stringify({ code: -1, msg: "单词已收藏", id: existing.results[0].id }), { headers: { 'Content-Type': 'application/json' } });
   } else {
     await executeDatabase(env, 'INSERT INTO home_keywordtable (keyword, keyword_heavy, keyword_html, definition, industry_definition, anagram, create_time) VALUES (?, ?, ?, ?, ?, ?, ?)', [
       data.keyword, data.keyword_heavy, data.keyword_html, data.definition, data.industry_definition, data.anagram, data.create_time || new Date().toISOString()
     ]);
     const inserted = await queryDatabase(env, 'SELECT id FROM home_keywordtable WHERE keyword = ?', [data.keyword]);
-    return new Response(JSON.stringify({ coce: 0, msg: "操作成功", id: inserted.results[0].id }));
+    return new Response(JSON.stringify({ coce: 0, msg: "操作成功", id: inserted.results[0].id }), { headers: { 'Content-Type': 'application/json' } });
   }
 }
 
@@ -103,6 +103,22 @@ export async function getKeywordById(request: IRequest, env: Env): Promise<Respo
   }), { headers: { 'Content-Type': 'application/json' } });
 }
 
+export async function listCategory(request: IRequest, env: Env): Promise<Response> {
+  const page = parseInt((request.query.page as string) || '1');
+  const size = parseInt((request.query.size as string) || '100');
+
+  const offset = (page - 1) * size;
+  const categories = await queryDatabase(env, 'SELECT * FROM home_categorytable LIMIT ? OFFSET ?', [size, offset]);
+
+  const total = await queryDatabase(env, 'SELECT COUNT(*) as count FROM home_categorytable');
+
+  return new Response(JSON.stringify({
+    code: 0,
+    result: categories.results,
+    total: total.results[0].count,
+  }), { headers: { 'Content-Type': 'application/json' } });
+}
+
 export async function addCategory(request: IRequest, env: Env): Promise<Response> {
   const data: { id?: number, uuid: string, name: string, create_time?: string } = await request.json();
   if (!data.id) {
@@ -116,4 +132,14 @@ export async function addCategory(request: IRequest, env: Env): Promise<Response
 export async function deleteCategory(request: IRequest, env: Env): Promise<Response> {
   await executeDatabase(env, 'DELETE FROM home_categorytable WHERE id = ?', [parseInt(request.params.id)]);
   return new Response(JSON.stringify({ code: 0 }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+// delete keyword on batch
+export async function download(request: IRequest, env: Env): Promise<Response> {
+  const ids: Array<number> = await request.json();
+  if (!!ids && ids.length > 0) {
+
+  }
+  await executeDatabase(env, `DELETE FROM home_keywordtable WHERE id IN (${ids.join(', ')})`);
+  return new Response(JSON.stringify({ code: 0, msg: "操作成功" }), { headers: { 'Content-Type': 'application/json' } });
 }

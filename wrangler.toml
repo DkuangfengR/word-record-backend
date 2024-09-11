@@ -1,6 +1,7 @@
 #:schema node_modules/wrangler/config-schema.json
 name = "word-record-backend"
-main = "src/index.ts"
+main = "src/worker.ts"
+type = "javascript"
 compatibility_date = "2023-05-18"
 compatibility_flags = ["nodejs_compat_v2"]
 
@@ -16,7 +17,7 @@ compatibility_flags = ["nodejs_compat_v2"]
 # - https://developers.cloudflare.com/workers/wrangler/configuration/#environment-variables
 # Note: Use secrets to store sensitive data.
 # - https://developers.cloudflare.com/workers/configuration/secrets/
-# [vars]
+[vars]
 USER_NAME = "admin"
 USER_PASSWORD = "123456"
 JWT_SECRET = "iosefnsdgkusawofnxlkghsdgsdxcvjksdkhfeioa"
@@ -38,7 +39,7 @@ JWT_SECRET = "iosefnsdgkusawofnxlkghsdgsdxcvjksdkhfeioa"
 
 # Bind a D1 database. D1 is Cloudflare’s native serverless SQL database.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#d1-databases
-# [[d1_databases]]
+[[d1_databases]]
 binding = "WRBDB"
 database_name = "word-record-backend"
 database_id = "4a1e03e9-1177-4fa9-a64f-76fb6bc13081"
