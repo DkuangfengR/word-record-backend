@@ -1,5 +1,6 @@
 export interface Env {
     WRBDB: D1Database;
+    WRBB: R2Bucket;
 }
 
 export async function queryDatabase(env: Env, query: string, params: any[] = []): Promise<any> {

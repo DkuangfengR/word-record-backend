@@ -1,6 +1,7 @@
 import { Env, queryDatabase, executeDatabase } from './db';
 import { v4 as uuidv4 } from 'uuid';
 import { IRequest } from 'itty-router';
+import { write, utils } from 'xlsx';
 
 export async function listColors({ query }: { query: { page: string, size: string } }, env: Env): Promise<Response> {
   const page = parseInt(query.page || '1');
@@ -24,6 +25,13 @@ export async function addColor(request: IRequest, env: Env): Promise<Response> {
   return new Response(JSON.stringify({ code: 0, msg: "success" }), { headers: { 'Content-Type': 'application/json' } });
 }
 
+export async function setColor(request: IRequest, env: Env): Promise<Response> {
+  const data: { id: number } = await request.json();
+  await executeDatabase(env, 'update home_colortable set status = 0 where status = 1');
+  await executeDatabase(env, 'update home_colortable set status = 1 where id = ?', [data.id]);
+  return new Response(JSON.stringify({ code: 0, msg: "success" }), { headers: { 'Content-Type': 'application/json' } });
+}
+
 export async function updateColor(request: IRequest, env: Env): Promise<Response> {
   const data: { color: string, desc: string, status: number, id: number } = await request.json();
   await executeDatabase(env, 'UPDATE home_colortable SET color = ?, desc = ?, status = ? WHERE id = ?', [
@@ -38,13 +46,21 @@ export async function deleteColor(request: IRequest, env: Env): Promise<Response
 }
 
 export async function listKeyword(request: IRequest, env: Env): Promise<Response> {
-  const page = parseInt((request.query.page as string) || '1');
-  const size = parseInt((request.query.size as string) || '100');
+  const data: { group_id?: string, sort?: string, keyword?: string, page?: string, size?: string, start_time?: string, end_time?: string } = request.query;
+  let sqlList = 'SELECT hk.*, hc.name FROM home_keywordtable hk left join home_categorytable hc on hk.group_id = hc.uuid where 1 = 1';
+  let sqlTotal = 'SELECT COUNT(hk.id) as count FROM home_keywordtable hk where 1 = 1'
+  const params = [];
+  const params2 = [];
 
-  const offset = (page - 1) * size;
-  const keywords = await queryDatabase(env, 'SELECT hk.*, hc.name FROM home_keywordtable hk left join home_categorytable hc on hk.group_id = hc.uuid LIMIT ? OFFSET ?', [size, offset]);
-
-  const total = await queryDatabase(env, 'SELECT COUNT(*) as count FROM home_keywordtable');
+  if (!!data) { // data有可能是{}
+    !!data.group_id && (sqlList += ' and hk.group_id = ?') && (sqlTotal += ' and hk.group_id = ?') && params.push(data.group_id) && params2.push(data.group_id);
+    !!data.keyword && (sqlList += ' and hk.keyword like ?') && (sqlTotal += ' and hk.keyword like ?') && params.push(`%${data.keyword}%`) && params2.push(`%${data.keyword}%`);
+    !!data.start_time && (sqlList += ' and hk.create_time between ? and ?') && (sqlTotal += ' and hk.create_time between ? and ?') && params.push(data.start_time, data.end_time) && params2.push(data.start_time, data.end_time);
+    !!data.sort && (sqlList += ` order by hk.${data.sort}${data.sort === 'keyword' ? ' asc' : ' desc'}`);
+    !!data.page && !!data.size && (sqlList += ' limit ?,?') && params.push((parseInt(data.page) - 1) * parseInt(data.size)) && params.push(parseInt(data.size));
+  }
+  const keywords = await queryDatabase(env, sqlList, params);
+  const total = await queryDatabase(env, sqlTotal, params2);
 
   return new Response(JSON.stringify({
     code: 0,
@@ -136,10 +152,58 @@ export async function deleteCategory(request: IRequest, env: Env): Promise<Respo
 
 // delete keyword on batch
 export async function download(request: IRequest, env: Env): Promise<Response> {
-  const ids: Array<number> = await request.json();
-  if (!!ids && ids.length > 0) {
+  const data: { group_id?: string, sort?: string, keyword?: string, start_time?: string, end_time?: string } = await request.json();
+  let sql = 'SELECT hk.*, hc.name FROM home_keywordtable hk left join home_categorytable hc on hk.group_id = hc.uuid where 1 = 1';
+  const file_name = Math.floor(Date.now() / 1000);
+  const params = [];
 
+  if (!!data) { // data有可能是{}
+    !!data.group_id && (sql += ' and hk.group_id = ?') && params.push(data.group_id);
+    !!data.keyword && (sql += ' and hk.keyword like ?') && params.push(`%${data.keyword}%`);
+    !!data.start_time && (sql += ' and hk.create_time between ? and ?') && params.push(data.start_time, data.end_time);
+    !!data.sort && (sql += ` order by hk.${data.sort}${data.sort === 'keyword' ? ' asc' : ' desc'}`);
+    const keywords = await queryDatabase(env, sql, params);
+
+    const excelData = [
+      ['单词', '重音', '释义', '备注', '分类', '创建时间'], // 表头
+      ...keywords.results.map((item: { keyword: number, keyword_heavy: string, definition: string, remark: string, name: string, create_time: string }) =>
+        [item.keyword, item.keyword_heavy, item.definition.replace('_', '\r\n'), item.remark, item.name, new Date(item.create_time).toISOString().slice(0, 19).replace('T', ' ')])
+    ];
+
+    // 生成工作表并写为二进制数据
+    const ws = utils.aoa_to_sheet(excelData);
+    const wb = utils.book_new();
+    utils.book_append_sheet(wb, ws, 'Sheet1');
+    const xlsxBinary = write(wb, { bookType: 'xlsx', type: 'array' });
+
+    // 上传到 Cloudflare R2
+    const bucket = env.WRBB; // R2 bucket绑定
+    const objectName = `download/${file_name}.xlsx`;
+
+    await bucket.put(objectName, new Uint8Array(xlsxBinary), {
+      httpMetadata: { contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+    });
   }
-  await executeDatabase(env, `DELETE FROM home_keywordtable WHERE id IN (${ids.join(', ')})`);
-  return new Response(JSON.stringify({ code: 0, msg: "操作成功" }), { headers: { 'Content-Type': 'application/json' } });
+
+  return new Response(JSON.stringify({ code: 0, msg: "操作成功", file_name: file_name }), { headers: { 'Content-Type': 'application/json' } });
+}
+
+export async function doDownload({ query }: { query: { file_name: string } }, env: Env): Promise<Response> {
+  // 从 R2 获取文件
+  const object = await env.WRBB.get(`download/${query.file_name}.xlsx`);
+
+  if (!object || !object.body) {
+    return new Response("File not found", { status: 404 });
+  }
+
+  // 文件流式响应
+  const responseHeaders = new Headers();
+  responseHeaders.set('Content-Type', 'application/octet-stream'); // 强制下载
+  responseHeaders.set('Content-Disposition', `attachment; filename="${query.file_name}.xlsx"`); // 设置下载文件名
+  responseHeaders.set('Cache-Control', 'no-cache'); // 禁止缓存
+
+  // 返回流式文件响应
+  return new Response(object.body, {
+    headers: responseHeaders,
+  });
 }
